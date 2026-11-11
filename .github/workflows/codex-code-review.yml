@@ -39,6 +39,7 @@ jobs:
           EOF
 
       - name: Run Codex Code Review
+        id: codex-review
         uses: openai/codex-action@v1
         env:
           GH_TOKEN: ${{ github.token }}
@@ -69,6 +70,24 @@ jobs:
             Distinguish verified findings from assumptions and untested behavior.
             Do not modify repository files or implement fixes.
 
-            Create a temporary file with `REVIEW_FILE=$(mktemp)`, write your review
-            to that file, and publish it with
-            `gh pr comment "$PR_NUMBER" --body-file "$REVIEW_FILE"`.
+            Return the review as your final response in GitHub-flavored Markdown.
+            Use actual line breaks and preserve backticks around code and paths.
+            Do not JSON-encode the Markdown or use literal backslash-n sequences
+            as line separators. Summarize verification results without including
+            raw command output, PR metadata, or the full diff.
+            Do not post comments yourself; the workflow publishes your final response.
+
+      - name: Publish Codex Review
+        if: steps.codex-review.outputs.final-message != ''
+        uses: actions/github-script@v7
+        env:
+          REVIEW_BODY: ${{ steps.codex-review.outputs.final-message }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: process.env.REVIEW_BODY,
+            });
