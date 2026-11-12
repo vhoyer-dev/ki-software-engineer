@@ -1,4 +1,4 @@
-import { AfterViewInit, Component, ElementRef, Input, OnChanges, OnDestroy, signal, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, Input, OnChanges, OnDestroy, signal, viewChild } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Book } from './book';
 
@@ -12,7 +12,7 @@ import { Book } from './book';
 export class BookCarouselComponent implements AfterViewInit, OnChanges, OnDestroy {
   @Input({ required: true }) books: Book[] = [];
   @Input() party = false;
-  @ViewChild('stage', { static: true }) private stage!: ElementRef<HTMLElement>;
+  private readonly stage = viewChild.required<ElementRef<HTMLElement>>('stage');
 
   readonly rotation = signal(0);
   readonly failedCovers = signal(new Set<string>());
@@ -45,12 +45,12 @@ export class BookCarouselComponent implements AfterViewInit, OnChanges, OnDestro
 
   ngAfterViewInit(): void {
     // Capture before RouterLink's click handler so a completed drag never navigates.
-    this.stage.nativeElement.addEventListener('click', this.captureClick, true);
+    this.stage().nativeElement.addEventListener('click', this.captureClick, true);
   }
 
   ngOnDestroy(): void {
     this.stopAnimation();
-    this.stage.nativeElement.removeEventListener('click', this.captureClick, true);
+    this.stage().nativeElement.removeEventListener('click', this.captureClick, true);
   }
 
   rotate(direction: number): void {
