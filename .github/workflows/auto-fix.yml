@@ -11,23 +11,51 @@ on:
 
 jobs:
   auto-fix:
-    # Only run if the CI workflow failed
-    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    # Repair trusted repository branches once; do not chain repairs of repair branches.
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      !startsWith(github.event.workflow_run.head_branch, 'auto-fix/')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
       actions: read
-      issues: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      BASE_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      FAILED_SHA: ${{ github.event.workflow_run.head_sha }}
+      FAILED_RUN_URL: ${{ github.event.workflow_run.html_url }}
+      FIX_BRANCH: auto-fix/${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
+      # Fine-grained PAT for this repository: Contents, Pull requests and Workflows: write.
+      # Use it only for publication, including fixes to .github/workflows files.
+      - name: Check publication token
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          if [ -z "$PAT_TOKEN" ]; then
+            echo '::error::Set PAT_TOKEN with Contents, Pull requests and Workflows write permissions.'
+            exit 1
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           # Use the SHA from the failed workflow run
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare repair branch
+        run: |
+          set -euo pipefail
+          git check-ref-format --branch "$BASE_BRANCH"
+          git show-ref --verify "refs/remotes/origin/$BASE_BRANCH"
+          git switch -c "$FIX_BRANCH"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -41,7 +69,6 @@ jobs:
       - name: Download failed workflow logs
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           FAILED_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
@@ -57,8 +84,6 @@ jobs:
 
       - name: Configure Codex
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
           mkdir -p "$RUNNER_TEMP/codex-home"
           cat > "$RUNNER_TEMP/codex-home/config.toml" <<'EOF'
           default_permissions = "github-autofix"
@@ -69,27 +94,25 @@ jobs:
           [permissions.github-autofix]
           extends = ":workspace"
 
-          [permissions.github-autofix.filesystem.":workspace_roots"]
-          ".git" = "write"
-
           [permissions.github-autofix.network]
           enabled = true
 
           [permissions.github-autofix.network.domains]
           "api.github.com" = "allow"
+          "fonts.googleapis.com" = "allow"
+          "fonts.gstatic.com" = "allow"
+          "registry.npmjs.org" = "allow"
           EOF
 
       - name: Run Codex Auto-Fix
         uses: openai/codex-action@v1
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           codex-home: ${{ runner.temp }}/codex-home
           permission-profile: github-autofix
           safety-strategy: drop-sudo
           model: 'gpt-5.6-luna'
+          output-file: ${{ runner.temp }}/auto-fix-summary.md
           prompt: |
             A CI build has failed. Analyze the errors and fix them automatically.
 
@@ -105,6 +128,7 @@ jobs:
                to analyze both the triggering workflow failure and the current application build
             2. Identify the root causes (build errors, linting problems, tests, etc.)
             3. Perform automatic fixes for:
+               - GitHub Actions workflow failures
                - YAML syntax errors in frontmatter
                - TypeScript/JavaScript errors
                - Import/export problems
@@ -120,28 +144,51 @@ jobs:
             - The workflow independently runs the build, commits, pushes, and creates a PR
             - A failed or blocked build is not successful validation; report it explicitly
             - Do not disable checks or remove tests to hide failures
+            - For this demo, remove the deliberately injected step named
+              "Simulate CI failure for auto-fix testing" when it is the reported failure.
+              Preserve the actual Codex review and all real build/test checks.
             - For critical or unresolvable errors, explain the blocker; the workflow reports failures as issues
 
             Begin by analyzing the workflow logs!
 
       - name: Verify fixes with build test
         run: |
-          echo "Testing if auto-fixes resolved the build issues..."
+          set -euo pipefail
+          test "$(git branch --show-current)" = "$FIX_BRANCH"
+          test "$(git rev-parse HEAD)" = "$FAILED_SHA"
+          test -s "$RUNNER_TEMP/auto-fix-summary.md"
+          git diff --check
+          git diff --cached --check
           npm run build
 
-      - name: Create Pull Request if changes were made
-        if: success()
+      - name: Commit verified fixes
         run: |
-          if [[ -n $(git status --porcelain) ]]; then
-            echo "Changes detected, but they should already be committed by Codex"
-            echo "Checking if we're on main branch..."
-            if [[ $(git branch --show-current) == "main" ]]; then
-              echo "Direct commits to main detected"
-              git log -1 --pretty=format:"%h - %s (%an)"
-            fi
-          else
-            echo "No uncommitted changes found"
+          set -euo pipefail
+          git add -A
+          if git diff --cached --quiet; then
+            echo '::error::Codex produced no fixes to publish.'
+            exit 1
           fi
+          git diff --cached --check
+          git commit -m "fix: repair CI failure from run ${{ github.event.workflow_run.id }}"
+
+      - name: Push repair branch and create pull request
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          git push --set-upstream origin "$FIX_BRANCH"
+          {
+            printf '## CI repair\n\nFailed run: %s\n\n' "$FAILED_RUN_URL"
+            printf 'Failed commit: `%s`\n\n' "$FAILED_SHA"
+            cat "$RUNNER_TEMP/auto-fix-summary.md"
+            printf '\n\n## Validation\n\n- Passed: `npm run build`\n- Passed: `git diff --check`\n'
+          } > "$RUNNER_TEMP/auto-fix-pr.md"
+          PR_URL=$(gh pr create --base "$BASE_BRANCH" --head "$FIX_BRANCH" \
+            --title "fix: repair CI failure from run ${{ github.event.workflow_run.id }}" \
+            --body-file "$RUNNER_TEMP/auto-fix-pr.md")
+          printf 'Repair pull request: %s\n' "$PR_URL" >> "$GITHUB_STEP_SUMMARY"
 
   notify-failure:
     if: ${{ always() && needs.auto-fix.result == 'failure' }}
