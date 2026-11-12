@@ -1,4 +1,4 @@
-<div class="carousel rounded-2xl border border-slate-200" [class.party]="party">
+<div class="carousel rounded-2xl border border-slate-200" [class.party]="party()">
   <div class="px-6 pt-6 text-center">
     <p class="text-xs font-semibold tracking-[0.25em] uppercase text-blue-700">A different perspective</p>
     <p id="carousel-help" class="mt-2 text-sm text-slate-600">Drag to spin · Use ← and → · Select a cover to explore</p>
@@ -19,12 +19,12 @@
     (lostpointercapture)="onPointerEnd($event)"
     (dragstart)="$event.preventDefault()"
   >
-    <div class="orbit" [style.--radius]="radius + 'px'" [style.--rotation]="rotation() + 'deg'">
-      @for (book of books; track book.id; let index = $index) {
+    <div class="orbit" [style.--radius]="radius() + 'px'" [style.--rotation]="rotation() + 'deg'">
+      @for (book of books(); track book.id; let index = $index) {
         <a
           tabindex="0"
           class="cover focus-visible:outline-4 focus-visible:outline-offset-4 focus-visible:outline-blue-600"
-          [style.--position]="index * step + 'deg'"
+          [style.--position]="index * step() + 'deg'"
           [routerLink]="['/books', book.id]"
           [attr.aria-label]="'View details for ' + book.title"
           (focus)="onCoverFocus($event, index)"
@@ -35,14 +35,14 @@
           } @else {
             <div class="placeholder"><span aria-hidden="true">◇</span><span>No cover available</span></div>
           }
-          @if (party) {
+          @if (party()) {
             <span class="cheer" aria-hidden="true">{{ cheers[index % cheers.length] }}</span>
           }
         </a>
       }
     </div>
   </div>
-  @if (party) {
+  @if (party()) {
     <div class="sparks" aria-hidden="true">
       @for (spark of sparks; track $index) {
         <span
@@ -60,19 +60,19 @@
       type="button"
       aria-label="Rotate left"
       (click)="rotate(1)"
-      [disabled]="party"
+      [disabled]="party()"
       class="h-11 w-11 rounded-full border border-slate-300 bg-white text-xl text-blue-700 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-700 disabled:opacity-40"
     >
       ←
     </button>
     <span class="text-xs tracking-widest text-slate-500 uppercase"
-      >{{ books.length }} {{ books.length === 1 ? 'book' : 'books' }}</span
+      >{{ books().length }} {{ books().length === 1 ? 'book' : 'books' }}</span
     >
     <button
       type="button"
       aria-label="Rotate right"
       (click)="rotate(-1)"
-      [disabled]="party"
+      [disabled]="party()"
       class="h-11 w-11 rounded-full border border-slate-300 bg-white text-xl text-blue-700 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-700 disabled:opacity-40"
     >
       →

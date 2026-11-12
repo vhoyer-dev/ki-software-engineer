@@ -2,15 +2,15 @@
 
 BookMonkey is a small Angular workshop application for browsing, searching, and viewing book details. It is a browser-rendered single-page application with list and detail views in one book feature, a separate HTTP API, and state owned by the feature components.
 
-This document describes the current repository implementation after the refactoring on 2026-11-09. Source and configuration were inspected and the production build was executed. The verification section distinguishes current checks from historical book-details checks and behavior that remains untested. [REFACTORING.md](./REFACTORING.md) records the original findings and their implementation status.
+This document describes the repository implementation after the Angular modernization on 2026-11-12. The verification section separates current checks from historical checks and behavior that remains untested. [REFACTORING.md](./REFACTORING.md) records the original findings and their implementation status.
 
 ## Application structure
 
-The application uses standalone components and Angular dependency injection; there is no application `NgModule` or central store.
+The application uses standalone components with `ChangeDetectionStrategy.OnPush` throughout and `inject()` for dependency injection; there is no application `NgModule` or central store. Angular 20 makes standalone the default, so components omit the redundant `standalone: true` metadata. Component inputs use `input()`; the card and carousel books inputs are required.
 
 ```mermaid
 flowchart TD
-    Main["main.ts: bootstrapApplication"] --> Config["appConfig: router, HTTP interceptor, error handler, zones, animations"]
+    Main["main.ts: bootstrapApplication"] --> Config["appConfig: router, HTTP interceptor, error handler, zones"]
     Main --> App["App: header, router outlet, footer"]
     App --> Routes["Routes: / and /books/:id; wildcard redirects to /"]
     Routes --> List["BookListComponent: search actions, request state, retry"]
@@ -31,7 +31,7 @@ flowchart TD
 | Area                  | Source                                                                   | Responsibility                                                                                                                                                    |
 | --------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Bootstrap             | [src/main.ts](./src/main.ts)                                             | Starts `App` with `bootstrapApplication`; logs bootstrap failures.                                                                                                |
-| Application providers | [app.config.ts](./src/app/app.config.ts)                                 | Registers browser error listeners, custom error handling, zone-based change detection with event coalescing, routing, HTTP error reporting, and animations.       |
+| Application providers | [app.config.ts](./src/app/app.config.ts)                                 | Registers browser error listeners, custom error handling, zone-based change detection with event coalescing, routing, and HTTP error reporting.                   |
 | Shell                 | [app.ts](./src/app/app.ts), [app.html](./src/app/app.html)               | Renders the shared header/footer and `RouterOutlet`.                                                                                                              |
 | Routing               | [app.routes.ts](./src/app/app.routes.ts)                                 | Eagerly imports the list for `/` and details for `/books/:id`; redirects unmatched paths to the list. No lazy routes, guards, or resolvers are configured.        |
 | Feature/controller    | [book-list.component.ts](./src/app/books/book-list.component.ts)         | Owns typed search actions and loading/success/error states; cancels superseded work and supports clear and retry.                                                 |
@@ -49,12 +49,12 @@ The feature folder groups its UI, model, and API adapter together. The dependenc
 
 1. The template subscribes once to `state$` through `AsyncPipe`. Its initial action calls `getBooks` with a default `pageSize` of 10.
 2. `BookApiClient` sends `GET http://localhost:4730/books?_limit=10`. A nonempty search adds the `q` query parameter through `HttpParams`.
-3. Search, clear, and retry actions feed a single pipeline. Repeated search terms are suppressed; text changes wait 300 ms. The outer `switchMap` cancels any pending delay or active request immediately when a new action arrives, before starting the next delay or request.
-4. Clear resets the input and loads the unfiltered list immediately. Retry immediately repeats the current term without being suppressed by term deduplication.
+3. The non-nullable `FormControl<string>` emits search actions through `valueChanges`, merged with explicit clear and retry actions into a single pipeline. Repeated search terms are suppressed; text changes wait 300 ms. The outer `switchMap` cancels any pending delay or active request immediately when a new action arrives, before starting the next delay or request.
+4. Clear resets the control with `emitEvent: false` and dispatches one immediate clear action, avoiding a second delayed request. Retry immediately repeats the control's current term without being suppressed by term deduplication.
 5. A discriminated view state exposes `loading`, `success` with books, or `error`. Successful zero results show an empty view. Failures remove previous cards and show an accessible local error view with retry; inner-stream error handling keeps later input and retries alive.
 6. The external template tracks cards by `book.id`. Destroying the view unsubscribes through `AsyncPipe`, canceling both pending delays and active requests.
 
-The search input uses template-driven forms (`ngModel`). Search state is not synchronized with the URL or persisted when returning from details. `_limit` restricts the requested result count; no page navigation or offset is implemented.
+The search input uses typed reactive forms (`ReactiveFormsModule` and `[formControl]`), with the control as the single source of the search value. Search state is not synchronized with the URL or persisted when returning from details. `_limit` restricts the requested result count; no page navigation or offset is implemented. The `pageSize` input defaults to 10 and is read when each request starts; changing that input alone does not trigger a request.
 
 ### Optional 3D carousel (Issue #1)
 
@@ -74,7 +74,12 @@ While carousel view is selected, the list component recognizes `party` through a
 including when the search input is focused and requests temporarily replace the carousel. Escape stops
 party mode. Switching to list resets both party state and partial sequences; destroying the list removes
 the Angular-managed listener. The carousel owns its animation frame and cancels it when party mode ends
-or the component is destroyed (including loading, errors, and navigation).
+or the component is destroyed (including loading, errors, and navigation). View selection and party mode
+are local signals in the list. The carousel uses signal inputs, a required `viewChild()` query for the
+stage, and `computed()` values for radius and angular spacing. An `effect()` starts the imperative
+animation when its inputs change; its cleanup cancels the frame and resets timing on rerun and teardown.
+Rotation and failed-cover IDs are local signals; failed-cover updates create a new set. The stage's
+capture-phase click listener is installed after view initialization and removed on destruction.
 
 Party rotation starts at 180 degrees per second and continuously accelerates by 90 degrees per second
 per second, with no speed ceiling. Each new party starts at the initial speed. Frame deltas are capped
@@ -92,13 +97,15 @@ synthetic touch PointerEvents check touch handling, not physical device behavior
 1. Each book card links to `/books/:id`. The detail component reads `ActivatedRoute.paramMap`, so direct navigation and reloads do not depend on an already loaded list.
 2. The route ID and retry trigger are combined into `state$`. `switchMap` starts `BookApiClient.getBook(id)`, which sends `GET http://localhost:4730/books/{encodedId}`. Changing the ID cancels the previous request. The template's `AsyncPipe` owns the subscription and unsubscribes when the view is destroyed.
 3. Each request starts with a loading state. Success provides the book; HTTP 404 produces a distinct not-found state; other failures produce an error state with a retry button. Errors are handled inside the request stream so retry and subsequent route changes remain available. A discriminated union makes these request states mutually exclusive in the type as well as in emitted values.
-4. The view displays title, optional subtitle, author, ISBN, publisher, page count, price, cover, and description. Price remains the API string; the description is interpolated as text. Empty additional fields are hidden, and a missing or failed cover image produces a placeholder. `coverFailed` is local UI state reset for each request. A keyboard-accessible link returns to the list.
+4. The view displays title, optional subtitle, author, ISBN, publisher, page count, price, cover, and description. Price remains the API string; the description is interpolated as text. Empty additional fields are hidden, and a missing or failed cover image produces a placeholder. `coverFailed` is a local signal reset for each request. A keyboard-accessible link returns to the list.
 
-There is no central store, query cache, or browser persistence. Both views own typed RxJS request-state streams consumed once with `AsyncPipe`. The search term and cover failure flag remain local UI fields.
+There is no central store, query cache, or browser persistence. Both views retain typed RxJS request-state streams consumed once with `AsyncPipe`, which marks their OnPush views for updates and owns request teardown. Local presentation state uses signals; the search term lives in its typed form control.
 
 ### Logic and templates
 
 The list, details, and card use colocated external HTML templates with built-in `@if`, `@for`, and `@switch` control flow as needed. Components own user actions and request state, the API adapter owns transport, and the card stays presentational. Templates select views and bind values; descriptions remain plain text. No shared state framework or extra dependency was introduced.
+
+The modernization follows the Angular CLI MCP `get_best_practices` guide within the repository's existing boundaries: eager routes, zone-based change detection, and RxJS request orchestration remain. It does not upgrade dependencies or add lazy loading, SSR, or a store. Covers remain ordinary images because their URLs come dynamically from API data; there are no static application images to migrate to `NgOptimizedImage`.
 
 - [List template](./src/app/books/book-list.component.html)
 - [Detail template](./src/app/books/book-details.component.html)
@@ -122,22 +129,22 @@ The tables cover all direct dependencies in [package.json](./package.json). Vers
 
 ### Application dependencies
 
-| Package(s)                                                                           | Declared version | Role in this repository                                                                                                                                 |
-| ------------------------------------------------------------------------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@angular/core`, `@angular/common`, `@angular/compiler`, `@angular/platform-browser` | `20.2.1` each    | Angular components, dependency injection, template support, compilation support, browser bootstrap, and HTTP support via `@angular/common/http`.        |
-| `@angular/router`                                                                    | `20.2.1`         | List/detail routing, book-card links, route parameters, and the shell's router outlet.                                                                  |
-| `@angular/forms`                                                                     | `20.2.1`         | Template-driven search input through `FormsModule` and `ngModel`.                                                                                       |
-| `@angular/animations`                                                                | `20.2.1`         | Animation support is enabled by `provideAnimations`.                                                                                                    |
-| `@angular/material`                                                                  | `^20.2.0`        | Used by global-error snack-bar feedback and global snack-bar Sass overrides; locked to `20.2.0` in the inspected lockfile.                              |
-| `@angular/cdk`                                                                       | `20.2.0`         | Declared UI infrastructure dependency alongside Material; no direct CDK imports in application source.                                                  |
-| `rxjs`                                                                               | `7.8.0`          | HTTP observables, cancellable search/debounce and retry pipelines, typed view-state streams consumed by `AsyncPipe`, and interceptor error propagation. |
-| `zone.js`                                                                            | `0.15.0`         | Configured browser polyfill, paired with zone-based change detection.                                                                                   |
-| `tslib`                                                                              | `2.3.0`          | TypeScript runtime helper dependency; `importHelpers` is enabled in the TypeScript configuration.                                                       |
-| `@ngrx/signals`                                                                      | `20.0.1`         | Declared but not imported or configured in application source.                                                                                          |
-| `@angular-architects/ngrx-toolkit`                                                   | `^20.1.0`        | Declared but not imported or configured; inspected lockfile resolves `20.1.0`.                                                                          |
-| `@tanstack/angular-query-experimental`                                               | `^5.85.5`        | Declared but no query provider or queries are configured; inspected lockfile resolves `5.85.5`.                                                         |
-| `@angular/platform-server`, `@angular/ssr`                                           | `20.2.1` each    | Declared, but there is no server bootstrap, server build entry, hydration provider, or SSR configuration.                                               |
-| `express`                                                                            | `5.1.0`          | Declared, but no Express server is implemented in this repository. It is not the implementation of the separately launched Bookmonkey API here.         |
+| Package(s)                                                                           | Declared version | Role in this repository                                                                                                                                                  |
+| ------------------------------------------------------------------------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `@angular/core`, `@angular/common`, `@angular/compiler`, `@angular/platform-browser` | `20.2.1` each    | Angular components, dependency injection, template support, compilation support, browser bootstrap, and HTTP support via `@angular/common/http`.                         |
+| `@angular/router`                                                                    | `20.2.1`         | List/detail routing, book-card links, route parameters, and the shell's router outlet.                                                                                   |
+| `@angular/forms`                                                                     | `20.2.1`         | Typed reactive search through `ReactiveFormsModule` and a non-nullable `FormControl<string>`.                                                                            |
+| `@angular/animations`                                                                | `20.2.1`         | Still declared, but not enabled or imported by application source. Material 20 snack bars use CSS animations; the deprecated `provideAnimations()` provider was removed. |
+| `@angular/material`                                                                  | `^20.2.0`        | Used by global-error snack-bar feedback and global snack-bar Sass overrides; locked to `20.2.0` in the inspected lockfile.                                               |
+| `@angular/cdk`                                                                       | `20.2.0`         | Declared UI infrastructure dependency alongside Material; no direct CDK imports in application source.                                                                   |
+| `rxjs`                                                                               | `7.8.0`          | HTTP observables, cancellable search/debounce and retry pipelines, typed view-state streams consumed by `AsyncPipe`, and interceptor error propagation.                  |
+| `zone.js`                                                                            | `0.15.0`         | Configured browser polyfill, paired with zone-based change detection.                                                                                                    |
+| `tslib`                                                                              | `2.3.0`          | TypeScript runtime helper dependency; `importHelpers` is enabled in the TypeScript configuration.                                                                        |
+| `@ngrx/signals`                                                                      | `20.0.1`         | Declared but not imported or configured in application source.                                                                                                           |
+| `@angular-architects/ngrx-toolkit`                                                   | `^20.1.0`        | Declared but not imported or configured; inspected lockfile resolves `20.1.0`.                                                                                           |
+| `@tanstack/angular-query-experimental`                                               | `^5.85.5`        | Declared but no query provider or queries are configured; inspected lockfile resolves `5.85.5`.                                                                          |
+| `@angular/platform-server`, `@angular/ssr`                                           | `20.2.1` each    | Declared, but there is no server bootstrap, server build entry, hydration provider, or SSR configuration.                                                                |
+| `express`                                                                            | `5.1.0`          | Declared, but no Express server is implemented in this repository. It is not the implementation of the separately launched Bookmonkey API here.                          |
 
 ### Development dependencies
 
@@ -189,10 +196,10 @@ The [book-detail tests](./tests/book-details.spec.ts) contain ten scenarios: key
 
 The [list tests](./tests/book-list.spec.ts) add fourteen scenarios for initial loading and links, debounce and latest results, immediate request cancellation, clear during debounce/request, cleanup on navigation, failure versus empty results, unchanged-term retry, network recovery, and new input after failure. The [global-error tests](./tests/global-errors.spec.ts) add six scenarios for browser errors, promise rejections, repeated-error deduplication, HTTP failure reporting with local retry, expected 404 handling, and network failure reporting without a global toast.
 
-Run all three application test files together:
+Run all four application test files together:
 
 ```sh
-npx playwright test tests/book-details.spec.ts tests/book-list.spec.ts tests/global-errors.spec.ts --workers=3 --reporter=line
+npx playwright test book-details.spec.ts book-list.spec.ts book-carousel.spec.ts global-errors.spec.ts --workers=3 --reporter=line
 ```
 
 These tests use controlled API responses and do not establish real-API search behavior. Global browser-error events are dispatched by the tests to exercise the application's registered handlers; no application test hooks are added.
@@ -210,8 +217,9 @@ Additional architecture boundaries:
 
 ## Verification status
 
+- **Current modernization checks on 2026-11-12:** `npm run build` passed outside the sandbox after the sandboxed attempt failed with `spawn EPERM`. Removing the unused legacy animation provider reduced the initial bundle from 500.92 kB to 437.25 kB in this modernization; the final build has no budget warning and budgets are unchanged. The four-file browser regression command above passed all 141 cases (47 scenarios across Chromium, Firefox, and WebKit) after the final provider change. API responses were mocked. Formatting was checked with `npx prettier --check ARCHITECTURE.md src/app/app.config.ts src/app/app.ts "src/app/books/*.{ts,html}" src/app/shared/toast.service.ts`; relative file links in this document and `git diff --check` were also checked.
 - **Verified by inspection:** component/service boundaries, list/detail routing, providers, state/request code, direct dependency constraints and lockfile resolutions, build/style configuration, and the scope of feature and example tests. Source links above provide the evidence.
-- **Current refactoring checks on 2026-11-09:** `npm run build` passed after the final global-handler change. The three-file application regression command above passed all 90 cases (30 scenarios across Chromium, Firefox, and WebKit), including search cancellation/cleanup, list errors and recovery, template/state regressions, global reporting, and notification deduplication. API responses were mocked; browser error/rejection events were dispatched by the tests.
+- **Historical refactoring checks on 2026-11-09:** `npm run build` passed after the final global-handler change. The three-file application regression command at that time passed all 90 cases (30 scenarios across Chromium, Firefox, and WebKit), including search cancellation/cleanup, list errors and recovery, template/state regressions, global reporting, and notification deduplication. API responses were mocked; browser error/rejection events were dispatched by the tests.
 - **Historical book-details implementation on 2026-11-09:** `npm run build` passed; the targeted Playwright command above passed 30 cases (ten scenarios in three browsers). Prettier checks for the changed source/test files and `git diff --check` passed.
 - **Historical real API and visual checks during book-details implementation (not repeated for refactoring):** an isolated Bookmonkey API 3.3.0 instance returned HTTP 200 for an existing ID and HTTP 404 for an unknown ID. A Chromium smoke check loaded and reloaded a real book through the frontend without JavaScript page errors. Desktop and 375-pixel-wide mobile screenshots were visually inspected; the mobile page had no horizontal overflow. The API instances used in-memory data; persistent storage was not tested.
 - **Not runtime-verified:** real-API search semantics, exhaustive response-schema compatibility, the Karma test command, the full suite including external examples, other API versions, and production hosting. The isolated checks do not establish continued availability of a separately running API.

@@ -36,7 +36,7 @@
           @let book = state.book;
           <article class="grid min-w-0 gap-8 md:grid-cols-[16rem_minmax(0,1fr)]">
             <div class="mx-auto aspect-[3/4] w-full max-w-64 overflow-hidden rounded-lg bg-gray-100">
-              @if (book.cover && !coverFailed) {
+              @if (book.cover && !coverFailed()) {
                 <img
                   [src]="book.cover"
                   [alt]="'Cover of ' + book.title"

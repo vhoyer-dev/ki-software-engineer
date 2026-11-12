@@ -1,6 +1,6 @@
 import { AsyncPipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { catchError, combineLatest, distinctUntilChanged, map, of, startWith, Subject, switchMap } from 'rxjs';
 import { Book } from './book';
@@ -14,16 +14,16 @@ type BookDetailsState =
 
 @Component({
   selector: 'app-book-details',
-  standalone: true,
   imports: [AsyncPipe, RouterLink],
-  templateUrl: './book-details.component.html'
+  templateUrl: './book-details.component.html',
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class BookDetailsComponent {
   private readonly route = inject(ActivatedRoute);
   private readonly bookApiClient = inject(BookApiClient);
   private readonly reload = new Subject<void>();
 
-  coverFailed = false;
+  readonly coverFailed = signal(false);
 
   readonly state$ = combineLatest([
     this.route.paramMap.pipe(
@@ -33,7 +33,7 @@ export class BookDetailsComponent {
     this.reload.pipe(startWith(undefined))
   ]).pipe(
     switchMap(([id]) => {
-      this.coverFailed = false;
+      this.coverFailed.set(false);
       return this.bookApiClient.getBook(id).pipe(
         map((book): BookDetailsState => ({ status: 'success', book })),
         catchError((error: HttpErrorResponse) =>
@@ -51,6 +51,6 @@ export class BookDetailsComponent {
   }
 
   onCoverError(): void {
-    this.coverFailed = true;
+    this.coverFailed.set(true);
   }
 }

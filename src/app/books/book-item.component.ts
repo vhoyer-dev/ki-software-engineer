@@ -1,13 +1,13 @@
-import { Component, Input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Book } from './book';
 
 @Component({
   selector: 'app-book-item',
-  standalone: true,
   imports: [RouterLink],
-  templateUrl: './book-item.component.html'
+  templateUrl: './book-item.component.html',
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class BookItemComponent {
-  @Input() book!: Book;
+  readonly book = input.required<Book>();
 }
