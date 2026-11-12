@@ -14,7 +14,7 @@
 
 ## Architecture
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the application structure, data flow, technology stack, dependencies, and current limitations.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the application structure, data flow, technology stack, dependencies, and current limitations..
 
 ## Local Development
 
