@@ -1,0 +1,4 @@
+[mcp_servers.ng-mcp]
+type = "stdio"
+command = "npx"
+args = ["-y", "@angular/cli", "mcp"]
