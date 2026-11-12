@@ -19,11 +19,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Simulate CI failure for auto-fix testing
-        run: |
-          echo "::error::Intentional failure to test the auto-fix workflow. Remove this step to restore code reviews."
-          exit 1
-
       - name: Configure Codex
         run: |
           mkdir -p "$RUNNER_TEMP/codex-home"
