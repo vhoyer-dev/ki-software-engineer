@@ -2,3 +2,8 @@
 type = "stdio"
 command = "npx"
 args = ["-y", "@angular/cli", "mcp"]
+
+[mcp_servers.workshops-de-angular-mcp]
+type = "stdio"
+command = "node"
+args = ["D:/git/ki-workshop/ki-software-engineer/dist/angular-mcp/index.js"]
