@@ -1,21 +1,34 @@
-import { AfterViewInit, Component, ElementRef, Input, OnChanges, OnDestroy, signal, ViewChild } from '@angular/core';
+import {
+  AfterViewInit,
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  ElementRef,
+  input,
+  OnDestroy,
+  signal,
+  viewChild
+} from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Book } from './book';
 
 @Component({
   selector: 'app-book-carousel',
-  standalone: true,
   imports: [RouterLink],
   templateUrl: './book-carousel.component.html',
-  styleUrl: './book-carousel.component.css'
+  styleUrl: './book-carousel.component.css',
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class BookCarouselComponent implements AfterViewInit, OnChanges, OnDestroy {
-  @Input({ required: true }) books: Book[] = [];
-  @Input() party = false;
-  @ViewChild('stage', { static: true }) private stage!: ElementRef<HTMLElement>;
+export class BookCarouselComponent implements AfterViewInit, OnDestroy {
+  readonly books = input.required<Book[]>();
+  readonly party = input(false);
+  private readonly stage = viewChild.required<ElementRef<HTMLElement>>('stage');
 
   readonly rotation = signal(0);
-  readonly failedCovers = signal(new Set<string>());
+  readonly failedCovers = signal<ReadonlySet<string>>(new Set());
+  readonly radius = computed(() => (this.books().length === 1 ? 0 : Math.max(165, this.books().length * 29)));
+  readonly step = computed(() => 360 / Math.max(1, this.books().length));
   readonly sparks = Array.from({ length: 28 }, (_, index) => ({
     angle: `${(index * 137.5) % 360}deg`,
     delay: `${-(index % 10) / 10}s`,
@@ -29,32 +42,27 @@ export class BookCarouselComponent implements AfterViewInit, OnChanges, OnDestro
   private suppressClick = false;
   private readonly captureClick = (event: MouseEvent) => this.onClick(event);
 
-  get radius(): number {
-    return this.books.length === 1 ? 0 : Math.max(165, this.books.length * 29);
-  }
-
-  get step(): number {
-    return 360 / Math.max(1, this.books.length);
-  }
-
-  ngOnChanges(): void {
-    this.stopAnimation();
-    this.pointer = undefined;
-    if (this.party) this.frame = requestAnimationFrame(time => this.animate(time));
+  constructor() {
+    effect(onCleanup => {
+      // Restart imperative animation when either input changes; also cancel it on teardown.
+      this.books();
+      this.pointer = undefined;
+      if (this.party()) this.frame = requestAnimationFrame(time => this.animate(time));
+      onCleanup(() => this.stopAnimation());
+    });
   }
 
   ngAfterViewInit(): void {
     // Capture before RouterLink's click handler so a completed drag never navigates.
-    this.stage.nativeElement.addEventListener('click', this.captureClick, true);
+    this.stage().nativeElement.addEventListener('click', this.captureClick, true);
   }
 
   ngOnDestroy(): void {
-    this.stopAnimation();
-    this.stage.nativeElement.removeEventListener('click', this.captureClick, true);
+    this.stage().nativeElement.removeEventListener('click', this.captureClick, true);
   }
 
   rotate(direction: number): void {
-    if (!this.party) this.rotation.update(angle => angle + direction * this.step);
+    if (!this.party()) this.rotation.update(angle => angle + direction * this.step());
   }
 
   onKeydown(event: KeyboardEvent): void {
@@ -65,7 +73,7 @@ export class BookCarouselComponent implements AfterViewInit, OnChanges, OnDestro
 
   onPointerDown(event: PointerEvent): void {
     this.suppressClick = false;
-    if (this.party || !event.isPrimary || event.button !== 0) return;
+    if (this.party() || !event.isPrimary || event.button !== 0) return;
     this.pointer = {
       id: event.pointerId,
       startX: event.clientX,
@@ -77,7 +85,7 @@ export class BookCarouselComponent implements AfterViewInit, OnChanges, OnDestro
 
   onPointerMove(event: PointerEvent): void {
     const pointer = this.pointer;
-    if (!pointer || pointer.id !== event.pointerId || this.party) return;
+    if (!pointer || pointer.id !== event.pointerId || this.party()) return;
     const distance = event.clientX - pointer.startX;
     if (!pointer.dragging) {
       if (Math.abs(distance) < 8 || Math.abs(distance) < Math.abs(event.clientY - pointer.startY)) return;
@@ -104,7 +112,8 @@ export class BookCarouselComponent implements AfterViewInit, OnChanges, OnDestro
   }
 
   onCoverFocus(event: FocusEvent, index: number): void {
-    if (!this.party && (event.target as HTMLElement).matches(':focus-visible')) this.rotation.set(-index * this.step);
+    if (!this.party() && (event.target as HTMLElement).matches(':focus-visible'))
+      this.rotation.set(-index * this.step());
   }
 
   onCoverError(id: string): void {

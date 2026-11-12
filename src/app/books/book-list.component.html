@@ -5,7 +5,7 @@
       <button
         type="button"
         (click)="selectView('list')"
-        [attr.aria-pressed]="view === 'list'"
+        [attr.aria-pressed]="view() === 'list'"
         class="rounded-full border border-blue-700 px-4 py-2 text-sm font-semibold text-blue-700 aria-pressed:bg-blue-700 aria-pressed:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-700"
       >
         List view
@@ -13,7 +13,7 @@
       <button
         type="button"
         (click)="selectView('carousel')"
-        [attr.aria-pressed]="view === 'carousel'"
+        [attr.aria-pressed]="view() === 'carousel'"
         class="rounded-full border border-blue-700 px-4 py-2 text-sm font-semibold text-blue-700 aria-pressed:bg-blue-700 aria-pressed:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-700"
       >
         3D carousel
@@ -25,13 +25,12 @@
     <div class="flex items-center border-b-2 border-gray-300 py-2">
       <input
         type="text"
-        [ngModel]="searchTerm"
-        (ngModelChange)="onSearchChange($event)"
+        [formControl]="searchControl"
         aria-label="Search for books"
         placeholder="Search for books..."
         class="appearance-none bg-transparent border-none w-full text-gray-700 mr-3 py-1 px-2 leading-tight focus-visible:outline-2 focus-visible:outline-blue-700"
       />
-      @if (searchTerm) {
+      @if (searchControl.value) {
         <button
           type="button"
           (click)="clearSearch()"
@@ -74,8 +73,8 @@
           </div>
         }
         @case ('success') {
-          @if (view === 'carousel' && state.books.length > 0) {
-            <app-book-carousel [books]="state.books" [party]="partyMode"></app-book-carousel>
+          @if (view() === 'carousel' && state.books.length > 0) {
+            <app-book-carousel [books]="state.books" [party]="partyMode()"></app-book-carousel>
           } @else {
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-8">
               @for (book of state.books; track book.id) {
@@ -100,12 +99,12 @@
                     />
                   </svg>
                   <p class="text-xl font-medium text-gray-600 mb-2">
-                    {{ searchTerm ? 'No books match your search' : 'No books available' }}
+                    {{ searchControl.value ? 'No books match your search' : 'No books available' }}
                   </p>
                   <p class="text-gray-500">
-                    {{ searchTerm ? 'Try different search terms or clear the search' : 'Check back later' }}
+                    {{ searchControl.value ? 'Try different search terms or clear the search' : 'Check back later' }}
                   </p>
-                  @if (searchTerm) {
+                  @if (searchControl.value) {
                     <button
                       type="button"
                       (click)="clearSearch()"

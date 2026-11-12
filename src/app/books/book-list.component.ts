@@ -1,7 +1,7 @@
 import { AsyncPipe } from '@angular/common';
-import { Component, inject, Input } from '@angular/core';
-import { FormsModule } from '@angular/forms';
-import { catchError, distinctUntilChanged, map, of, startWith, Subject, switchMap, timer } from 'rxjs';
+import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angular/core';
+import { FormControl, ReactiveFormsModule } from '@angular/forms';
+import { catchError, distinctUntilChanged, map, merge, of, startWith, Subject, switchMap, timer } from 'rxjs';
 import { Book } from './book';
 import { BookApiClient } from './book-api-client.service';
 import { BookItemComponent } from './book-item.component';
@@ -16,28 +16,31 @@ interface BookListAction {
 
 @Component({
   selector: 'app-book-list',
-  standalone: true,
-  imports: [AsyncPipe, FormsModule, BookItemComponent, BookCarouselComponent],
+  imports: [AsyncPipe, ReactiveFormsModule, BookItemComponent, BookCarouselComponent],
   templateUrl: './book-list.component.html',
+  changeDetection: ChangeDetectionStrategy.OnPush,
   host: { '(document:keydown)': 'onDocumentKeydown($event)' }
 })
 export class BookListComponent {
   private readonly bookApiClient = inject(BookApiClient);
   private readonly actions = new Subject<BookListAction>();
 
-  @Input() pageSize = 10;
-  searchTerm = '';
-  view: 'list' | 'carousel' = 'list';
-  partyMode = false;
+  readonly pageSize = input(10);
+  readonly searchControl = new FormControl('', { nonNullable: true });
+  readonly view = signal<'list' | 'carousel'>('list');
+  readonly partyMode = signal(false);
   private partySequence = '';
 
-  readonly state$ = this.actions.pipe(
+  readonly state$ = merge(
+    this.actions,
+    this.searchControl.valueChanges.pipe(map((term): BookListAction => ({ type: 'search', term })))
+  ).pipe(
     startWith<BookListAction>({ type: 'initial', term: '' }),
     distinctUntilChanged((previous, current) => current.type === 'search' && previous.term === current.term),
     // Switch before the delay: a new action cancels both debounce and in-flight HTTP immediately.
     switchMap(action =>
       (action.type === 'search' ? timer(300) : of(0)).pipe(
-        switchMap(() => this.bookApiClient.getBooks(this.pageSize, action.term)),
+        switchMap(() => this.bookApiClient.getBooks(this.pageSize(), action.term)),
         map((books): BookListState => ({ status: 'success', books })),
         catchError(() => of<BookListState>({ status: 'error' })),
         startWith<BookListState>({ status: 'loading' })
@@ -45,30 +48,25 @@ export class BookListComponent {
     )
   );
 
-  onSearchChange(term: string): void {
-    this.searchTerm = term;
-    this.actions.next({ type: 'search', term });
-  }
-
   clearSearch(): void {
-    this.searchTerm = '';
+    this.searchControl.reset('', { emitEvent: false });
     this.actions.next({ type: 'clear', term: '' });
   }
 
   retry(): void {
-    this.actions.next({ type: 'retry', term: this.searchTerm });
+    this.actions.next({ type: 'retry', term: this.searchControl.value });
   }
 
   selectView(view: 'list' | 'carousel'): void {
-    this.view = view;
-    this.partyMode = false;
+    this.view.set(view);
+    this.partyMode.set(false);
     this.partySequence = '';
   }
 
   onDocumentKeydown(event: KeyboardEvent): void {
-    if (this.view !== 'carousel') return;
+    if (this.view() !== 'carousel') return;
     if (event.key === 'Escape') {
-      this.partyMode = false;
+      this.partyMode.set(false);
       this.partySequence = '';
       return;
     }
@@ -79,7 +77,7 @@ export class BookListComponent {
     }
     this.partySequence = (this.partySequence + event.key.toLowerCase()).slice(-5);
     if (this.partySequence === 'party') {
-      this.partyMode = true;
+      this.partyMode.set(true);
       this.partySequence = '';
     }
   }
