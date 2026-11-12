@@ -32,10 +32,10 @@ jobs:
       # Use it only for publication, including fixes to .github/workflows files.
       - name: Check publication token
         env:
-          AUTO_FIX_TOKEN: ${{ secrets.AUTO_FIX_TOKEN }}
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          if [ -z "$AUTO_FIX_TOKEN" ]; then
-            echo '::error::Set AUTO_FIX_TOKEN with Contents, Pull requests and Workflows write permissions.'
+          if [ -z "$PAT_TOKEN" ]; then
+            echo '::error::Set PAT_TOKEN with Contents, Pull requests and Workflows write permissions.'
             exit 1
           fi
 
@@ -156,7 +156,7 @@ jobs:
 
       - name: Push repair branch and create pull request
         env:
-          GH_TOKEN: ${{ secrets.AUTO_FIX_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           set -euo pipefail
           gh auth setup-git
